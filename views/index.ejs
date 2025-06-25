@@ -1,0 +1,30 @@
+<!-- views/index.ejs -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Twitter Thread Summarizer</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    input, button { padding: 0.5rem; font-size: 1rem; }
+    form { margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Summarize a Twitter Thread</h1>
+
+  <form action="/summarize" method="POST">
+    <label for="url">Paste Thread URL:</label><br>
+    <input
+      type="text"
+      name="url"
+      id="url"
+      placeholder="https://x.com/username/status/..."
+      size="50"
+      required
+    />
+    <button type="submit">Summarize</button>
+  </form>
+</body>
+</html>
