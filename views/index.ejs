@@ -1,30 +1,58 @@
-<!-- views/index.ejs -->
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Twitter Thread Summarizer</title>
   <style>
-    body { font-family: sans-serif; padding: 2rem; }
-    input, button { padding: 0.5rem; font-size: 1rem; }
-    form { margin-top: 1rem; }
+    body {
+      font-family: sans-serif;
+      padding: 2rem;
+      max-width: 700px;
+      margin: auto;
+    }
+    input, button {
+      padding: 0.5rem;
+      font-size: 1rem;
+      width: 100%;
+      margin-top: 0.5rem;
+    }
+    form {
+      margin-top: 1rem;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 1rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .error {
+      color: red;
+      margin-top: 1rem;
+    }
   </style>
 </head>
 <body>
   <h1>Summarize a Twitter Thread</h1>
 
   <form action="/summarize" method="POST">
-    <label for="url">Paste Thread URL:</label><br>
+    <label for="tweetUrl">Paste Thread URL:</label><br>
     <input
       type="text"
-      name="url"
-      id="url"
+      name="tweetUrl"
+      id="tweetUrl"
       placeholder="https://x.com/username/status/..."
-      size="50"
       required
     />
     <button type="submit">Summarize</button>
   </form>
+
+  <% if (error) { %>
+    <div class="error"><%= error %></div>
+  <% } %>
+
+  <% if (summary && summary.trim()) { %>
+    <h2>Summary</h2>
+    <pre><%= summary %></pre>
+  <% } %>
 </body>
 </html>

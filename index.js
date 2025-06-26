@@ -1,102 +1,126 @@
-// index.js
+require('dotenv').config();
+const express = require('express');
+const path = require('path');
+const bodyParser = require('body-parser');
+const { TwitterApi } = require('twitter-api-v2');
+const summarizeWithGemini = require('./gemini/summarize');
+const extractTweetId = require('./twitter/extract-id');
 
-require('dotenv').config() // Load environment variables
-const { TwitterApi } = require('twitter-api-v2')
-// ✅ App-level (Bearer) client
-const twitterClient = new TwitterApi(process.env.TWITTER_BEARER_TOKEN)
-const express = require('express')              // Web framework
-const bodyParser = require('body-parser')       // Parses POST form data
-const path = require('path')                    // Utility for directory paths
-const { GoogleGenerativeAI } = require('@google/generative-ai')
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+const twitterClient = new TwitterApi({
+  appKey: process.env.TWITTER_API_KEY,
+  appSecret: process.env.TWITTER_API_SECRET,
+  accessToken: process.env.TWITTER_ACCESS_TOKEN,
+  accessSecret: process.env.TWITTER_ACCESS_SECRET
+});
 
+const client = twitterClient.readWrite;
 
-const app = express()
-const PORT = process.env.PORT || 3000           // Port fallback
-async function summarizeWithGemini(text) {
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.urlencoded({ extended: true }));
+
+app.get('/', (req, res) => {
+  res.render('index', { summary: null, error: null });
+});
+
+app.post('/summarize', async (req, res) => {
+  const tweetUrl = req.body.tweetUrl?.trim();
+
+  if (!tweetUrl) {
+    console.log('❌ No URL submitted');
+    return res.render('index', { summary: null, error: 'No URL submitted' });
+  }
+
+  const tweetId = extractTweetId(tweetUrl);
+  if (!tweetId) {
+    console.log('❌ Invalid Tweet URL format');
+    return res.render('index', { summary: null, error: 'Invalid Tweet URL' });
+  }
+
+  console.log(`🔎 Extracted Tweet ID: ${tweetId}`);
+   try {
+    // ✅ Check who owns the token
+    const me = await client.v2.me();
+    console.log("🔐 Bearer token belongs to:", me.data.username);
+
+    if (me.data.username !== 'g0nz0g0') {
+      return res.render('index', {
+        summary: null,
+        error: '❌ Your Bearer token does not belong to @g0nz0g0. Tweet access is restricted.'
+      });
+    }
+
+    // 🔽 your fetch + summarize logic continues here
+
+  } catch (err) {
+    console.error("❌ Error during summarize flow:", err);
+
+    return res.render('index', {
+      summary: null,
+      error: '❌ An unexpected error occurred. Check console for details.'
+    });
+  }
+
   try {
-    // Initialize Gemini Pro model
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    console.log(`📡 Fetching single tweet ${tweetId}...`);
+    const tweet = await client.v2.singleTweet(tweetId, {
+      'tweet.fields': ['author_id', 'conversation_id']
+    });
 
-    // Send prompt to generate summary
-    const result = await model.generateContent(
-      `Summarize the following tweet in one short paragraph:\n\n${text}`
+    console.log('Raw tweet response:', tweet);
+
+if (!tweet || typeof tweet !== 'object' || !tweet.data || typeof tweet.data.text !== 'string') {
+  return res.render('index', {
+    summary: null,
+    error: '❌ Could not fetch tweet text (invalid structure or missing data).'
+  });
+}
+
+
+    const { author_id, conversation_id } = tweet.data;
+    console.log(`✅ Tweet fetched. Author: ${author_id}, Conversation: ${conversation_id}`);
+
+    console.log(`📡 Searching full thread using conversation_id...`);
+    const thread = await client.v2.search(
+      `conversation_id:${conversation_id} from:${author_id}`,
+      {
+        max_results: 100,
+        'tweet.fields': ['created_at']
+      }
     );
 
-    // Extract text from Gemini response
-    const response = await result.response;
-    return response.text().trim();
+    const tweets = thread.data?.data;
+    if (!tweets || tweets.length === 0) {
+      console.log('❌ No tweets found in thread');
+      return res.render('index', {
+        summary: null,
+        error: 'Thread not found or empty'
+      });
+    }
 
-  } catch (error) {
-    // Log and rethrow to be handled in route
-    console.error("Gemini API error:", error);
-    throw new Error("Failed to summarize with Gemini");
+    console.log(`✅ Thread fetched. Total tweets: ${tweets.length}`);
+    tweets.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const fullThread = tweets.map(t => t.text).join('\n\n');
+
+    console.log(`📤 Sending thread to Gemini...`);
+    const summary = await summarizeWithGemini(fullThread);
+    console.log(`✅ Gemini summary generated.`);
+
+    res.render('index', { summary, error: null });
+
+  } catch (err) {
+    console.error('🔥 Error during summarize flow:', err);
+    res.render('index', {
+      summary: null,
+      error: 'Failed to fetch or summarize thread'
+    });
   }
-}
-// Set EJS as view engine and set views folder
-app.set('view engine', 'ejs')
-app.set('views', path.join(__dirname, 'views'))
+});
 
-// Serve static files (e.g., public/styles.css if added later)
-app.use(express.static(path.join(__dirname, 'public')))
-
-// Parse form input data
-app.use(bodyParser.urlencoded({ extended: true }))
-
-// Route: render homepage form
-app.get('/', (req, res) => {
-  res.render('index') // Renders views/index.ejs
-})
-
-// Route: handle form POST
-app.post('/summarize', async (req, res) => {
-  const tweetUrl = req.body.url.trim()
-  const parts = tweetUrl.split("/")
-  const lastPart = parts[parts.length - 1]
-  const tweetId = Number(lastPart)
-
-  if (!Number.isInteger(tweetId) || tweetId <= 0) {
-    return res.send("❌ Invalid tweet URL. It must end with a numeric tweet ID.")
-  }
-
-  try {
-  //const tweet = await twitterClient.v2.singleTweet(tweetId)
-  //const tweetText = tweet.data?.text
-  const tweetText = `
-Building a Twitter bot in Node.js was easier than I expected. 
-Used Twitter API v2, Express for the frontend, and a GPT model for summaries.
-Thinking of turning this into a tool for quick news briefings!
-`;
-
-  if (!tweetText) {
-    return res.send("❌ Couldn't retrieve tweet text.")
-  }
-  const summary = await summarizeWithGemini(tweetText);
-
-    res.send(`
-  <h2>📝 Original Tweet</h2>
-  <pre>${tweetText}</pre>
-  <h2>📌 Summary (via Gemini Flash)</h2>
-  <p style="
-  max-width: 60ch;
-  word-wrap: break-word;
-  white-space: normal;
-  font-family: sans-serif;
-  line-height: 1.5;
-">
-  ${summary}
-</p>
-
-`);
-
-} catch (error) {
-  console.error("Twitter or Gemini error:", error)
-  return res.send("❌ Failed to fetch and summarize tweet.")
-}
-})
-
-
-// Start the server
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`)
-})
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
+});
